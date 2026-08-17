@@ -106,4 +106,4 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2.24.0
         if: steps.download.outcome == 'success'
         with:
-          trx_files: "test-results/**/*.trx"
+          files: "test-results/**/*.trx"
