@@ -1,0 +1,71 @@
+name: .NET Release
+
+# Reusable release pipeline for Annium .NET sub-projects.
+#
+# The workflow knows only how to set up the toolchain and invoke `just`; the
+# whole release sequence (format guard, version bump, build, lint, test, pack,
+# publish, tag) lives in the caller's `ci-release` recipe.
+
+on:
+  workflow_call:
+    inputs:
+      dotnet-version:
+        description: .NET SDK version handed to actions/setup-dotnet.
+        type: string
+        default: '10.0.x'
+      runs-on:
+        description: Runner label the jobs execute on.
+        type: string
+        default: ubuntu-latest
+      skip-ci-marker:
+        description: Substring in the head-commit message that skips the release entirely.
+        type: string
+        default: 'skip ci'
+      test-results-retention-days:
+        description: How long the TRX artifact is kept.
+        type: number
+        default: 30
+    secrets:
+      NUGET_API_KEY:
+        description: API key the `publish` recipe pushes packages with.
+        required: true
+
+jobs:
+  init:
+    runs-on: ${{ inputs.runs-on }}
+    outputs:
+      run_ci: ${{ steps.check.outputs.run_ci }}
+    steps:
+      - name: Check if the release should run
+        id: check
+        run: echo "run_ci=${{ !contains(github.event.head_commit.message, inputs.skip-ci-marker) }}" >> $GITHUB_OUTPUT
+
+  release:
+    runs-on: ${{ inputs.runs-on }}
+    needs: init
+    if: ${{ needs.init.outputs.run_ci == 'true' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Setup just
+        uses: extractions/setup-just@v4
+
+      - name: Run
+        run: just ci-release "${{ secrets.NUGET_API_KEY }}" "${{ github.repository }}" "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-results
+          path: '**/*.trx'
+          if-no-files-found: warn
+          retention-days: ${{ inputs.test-results-retention-days }}
