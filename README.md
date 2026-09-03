@@ -140,6 +140,12 @@ All four accept `dotnet-version` (default `10.0.x`) and `runs-on` (default `ubun
 `runs-on` to a self-hosted label for private repositories — never for public ones, where fork pull
 requests would then execute on your machine.
 
+The three that run a recipe also accept `timeout-minutes` — 20 for `dotnet-run.yml`, 45 for
+`dotnet-test.yml`, 60 for `dotnet-release.yml`. GitHub's own default is 360 minutes, which is not a
+limit so much as an absence of one: a test hanging on a network call burns six hours of runner time
+before anyone hears about it. Raise it where a recipe honestly takes longer, rather than leaving it
+unset.
+
 | Workflow | Also accepts |
 |----------|--------------|
 | `dotnet-run.yml` | `recipe` (required) |

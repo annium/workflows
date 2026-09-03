@@ -41,6 +41,13 @@ on:
         description: Runner label the job executes on.
         type: string
         default: ubuntu-latest
+      timeout-minutes:
+        description: >-
+          Job timeout. GitHub's default is 360 minutes, which is not a limit so much as an absence of
+          one: a test that hangs on a network call burns six hours of runner time before anyone hears
+          about it. Set this to a little above the honest duration of the recipe.
+        type: number
+        default: 45
       test-results-retention-days:
         description: How long the TRX artifact is kept.
         type: number
@@ -49,6 +56,7 @@ on:
 jobs:
   test:
     runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     environment: ${{ inputs.environment }}
     steps:
       - name: Checkout repository
