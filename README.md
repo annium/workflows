@@ -1,30 +1,28 @@
 # annium/workflows
 
-Reusable GitHub Actions workflows shared by every Annium .NET sub-project.
+Reusable GitHub Actions workflows shared by Annium .NET repositories.
 
-The workflows here own only the *plumbing* — checkout, .NET SDK, `just`, artifact
-upload, test reporting. Everything a pipeline actually does lives in the calling
-repository's `justfile`, under these recipes:
+Each file here is **one job that does one thing**: bring up the toolchain and invoke one `just`
+recipe. What the recipe does lives in the calling repository's `justfile`. What shape the pipeline
+has — which recipes run, in what order, with what matrix — lives in the caller's workflow.
 
-| Recipe | Called by |
-|--------|-----------|
-| `ci-merge-request-short` | `dotnet-merge-request.yml`, when the PR title contains `skip ci` |
-| `ci-merge-request-full` | `dotnet-merge-request.yml`, otherwise |
-| `ci-release <apiKey> <repository> <githubToken>` | `dotnet-release.yml` |
+That is the change from v1, where a single workflow owned the whole pipeline. It fit six similar
+repositories and stopped fitting when they merged: one of them now wants its tests split across
+parallel jobs while another still wants one, and a shape baked in here cannot be both.
 
-That split is deliberate: adding a step to a pipeline is a change in the
-sub-project that owns it, while changing *how* pipelines are wired is a change
-here — applied to every sub-project at once.
+| Workflow | Job |
+|----------|-----|
+| `dotnet-run.yml` | run one recipe |
+| `dotnet-test.yml` | run one recipe, upload its TRX, optionally inside a GitHub Environment |
+| `test-report.yml` | collect the TRX artifacts and publish one check |
+| `dotnet-release.yml` | run `ci-release <apiKey> <repository> <githubToken>` |
 
-This repository is public so that private sub-projects can call it without any
-extra access configuration.
+This repository is public so that private repositories can call it without extra access
+configuration.
 
 ## Usage
 
-Both callers are thin stubs. Copy them into `.github/workflows/` of the
-sub-project.
-
-`.github/workflows/merge-request.yml`:
+### A pipeline with parallel test groups
 
 ```yaml
 name: Merge Request
@@ -43,11 +41,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
-    uses: annium/workflows/.github/workflows/dotnet-merge-request.yml@v1
+  check:
+    uses: annium/workflows/.github/workflows/dotnet-run.yml@v2
+    with:
+      recipe: ci-check
+
+  test:
+    needs: check
+    if: ${{ !contains(github.event.pull_request.title, 'skip ci') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [ framework, adapters ]
+    uses: annium/workflows/.github/workflows/dotnet-test.yml@v2
+    with:
+      recipe: ci-test-${{ matrix.group }}
+      artifact: test-results-${{ matrix.group }}
+
+  report:
+    needs: test
+    if: ${{ always() && !contains(github.event.pull_request.title, 'skip ci') }}
+    uses: annium/workflows/.github/workflows/test-report.yml@v2
 ```
 
-`.github/workflows/release.yml`:
+`fail-fast: false` so that one failing group still lets the other report. Give matrix jobs distinct
+artifact names — two uploads under one name collide — and let `test-report.yml` gather them by
+pattern.
+
+### A pipeline with one test job
+
+```yaml
+jobs:
+  check:
+    uses: annium/workflows/.github/workflows/dotnet-run.yml@v2
+    with:
+      recipe: ci-check
+  test:
+    needs: check
+    if: ${{ !contains(github.event.pull_request.title, 'skip ci') }}
+    uses: annium/workflows/.github/workflows/dotnet-test.yml@v2
+    with:
+      recipe: ci-test
+      artifact: test-results-all
+  report:
+    needs: test
+    if: ${{ always() }}
+    uses: annium/workflows/.github/workflows/test-report.yml@v2
+```
+
+### Release
 
 ```yaml
 name: Release
@@ -66,41 +108,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check:
+    uses: annium/workflows/.github/workflows/dotnet-run.yml@v2
+    with:
+      recipe: ci-check
+  test:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [ framework, adapters ]
+    uses: annium/workflows/.github/workflows/dotnet-test.yml@v2
+    with:
+      recipe: ci-test-${{ matrix.group }}
+      artifact: test-results-${{ matrix.group }}
   release:
-    uses: annium/workflows/.github/workflows/dotnet-release.yml@v1
+    needs: test
+    uses: annium/workflows/.github/workflows/dotnet-release.yml@v2
     secrets: inherit
 ```
 
-`permissions` and `concurrency` belong to the caller: a called workflow can only
-narrow the token the caller grants it, and cancellation applies to the caller's
-run.
+`ci-release` no longer runs the tests itself: the jobs above gate it.
+
+`permissions` and `concurrency` belong to the caller — a called workflow can only narrow the token
+the caller grants it, and cancellation applies to the caller's run. So does the `skip ci` marker,
+which is now an `if:` on the jobs rather than a job of its own computing it.
 
 ## Inputs
 
-Both workflows accept:
+All four accept `dotnet-version` (default `10.0.x`) and `runs-on` (default `ubuntu-latest`). Set
+`runs-on` to a self-hosted label for private repositories — never for public ones, where fork pull
+requests would then execute on your machine.
 
-| Input | Default | Purpose |
-|-------|---------|---------|
-| `dotnet-version` | `10.0.x` | Passed to `actions/setup-dotnet` |
-| `runs-on` | `ubuntu-latest` | Runner label. Set to a self-hosted label for private repos — never for public ones, where fork PRs would execute on your machine |
-| `test-results-retention-days` | `30` | TRX artifact retention |
+| Workflow | Also accepts |
+|----------|--------------|
+| `dotnet-run.yml` | `recipe` (required) |
+| `dotnet-test.yml` | `recipe` (required), `artifact`, `environment`, `test-results-retention-days` |
+| `test-report.yml` | `artifact-pattern` (default `test-results-*`) |
+| `dotnet-release.yml` | `test-results-retention-days`; requires the `NUGET_API_KEY` secret |
 
-`dotnet-merge-request.yml` also takes `short-pipeline-marker` (default `skip ci`)
-— the PR-title substring that downgrades the run to the short pipeline.
+### `environment`
 
-`dotnet-release.yml` also takes `skip-ci-marker` (default `skip ci`) — the
-head-commit substring that skips the release, and requires the `NUGET_API_KEY`
-secret. It is an organization secret, so `secrets: inherit` is enough; the
-calling repository must be on that secret's visibility list.
+`dotnet-test.yml` takes an `environment` input, and declares it on the job. It has to live here
+rather than in the caller: `on.workflow_call` does not accept the `environment` keyword.
+
+That placement is also what makes it useful. A secret attached to a GitHub Environment is visible
+only to a job that declares that environment — a pipeline that does not name it cannot read those
+secrets at all. Use it for credentials that reach a live system, and the ordinary pull-request
+pipeline stays unable to see them no matter what a branch adds to it.
+
+`NUGET_API_KEY` is an organization secret, so `secrets: inherit` is enough; the calling repository
+must be on that secret's visibility list.
 
 ## Versioning
 
-Callers pin `@v1`, a moving major tag. Move it after a backwards-compatible
-change:
+Callers pin `@v2`, a moving major tag. Move it after a backwards-compatible change:
 
 ```bash
-git tag -f v1 && git push -f origin v1
+git tag -f v2 && git push -f origin v2
 ```
 
-Cut `v2` for anything that breaks callers — a new required input, a renamed
-recipe, a dropped default.
+Cut `v3` for anything that breaks callers — a new required input, a renamed recipe, a dropped
+default.
+
+`v1` is frozen at the pipeline-owning shape and stays until nothing points at it.

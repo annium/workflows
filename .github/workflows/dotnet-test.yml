@@ -1,0 +1,77 @@
+name: .NET Test
+
+# dotnet-run.yml plus TRX collection, and the option of running inside a GitHub Environment.
+#
+# The artifact name is an input because callers run this several times over a matrix, and two jobs
+# uploading under one name collide. Name them apart - `test-results-${{ matrix.group }}` - and let
+# test-report.yml gather them by pattern.
+#
+# `environment` is declared here rather than by the caller because `on.workflow_call` does not accept
+# that keyword. That placement is also what makes it useful: a secret attached to an environment is
+# visible only to a job that declares it, so a pipeline that does not name the environment cannot
+# read those secrets at all. That is the point for credentials which reach a live system.
+
+on:
+  workflow_call:
+    inputs:
+      recipe:
+        description: The `just` recipe to run.
+        type: string
+        required: true
+      artifact:
+        description: >-
+          Name for the TRX artifact. Must be unique per job in a run - give matrix jobs distinct
+          names, and have test-report.yml collect them by pattern.
+        type: string
+        default: test-results
+      environment:
+        description: >-
+          GitHub Environment to run in, if any. Its secrets become visible to this job and to no
+          other, and its protection rules - required reviewers, branch restrictions - apply.
+          Left empty, the job runs in no environment: an empty name is treated as unset, and the
+          `inputs` context is one of the few available while a job is still being configured, which
+          `env` is not.
+        type: string
+        default: ''
+      dotnet-version:
+        description: .NET SDK version handed to actions/setup-dotnet.
+        type: string
+        default: '10.0.x'
+      runs-on:
+        description: Runner label the job executes on.
+        type: string
+        default: ubuntu-latest
+      test-results-retention-days:
+        description: How long the TRX artifact is kept.
+        type: number
+        default: 30
+
+jobs:
+  test:
+    runs-on: ${{ inputs.runs-on }}
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Setup just
+        uses: extractions/setup-just@v4
+
+      - name: Run
+        run: just ${{ inputs.recipe }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ${{ inputs.artifact }}
+          path: '**/*.trx'
+          if-no-files-found: warn
+          retention-days: ${{ inputs.test-results-retention-days }}

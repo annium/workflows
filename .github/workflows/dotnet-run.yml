@@ -1,0 +1,45 @@
+name: .NET Run
+
+# One job: bring up the toolchain and invoke one `just` recipe.
+#
+# It knows nothing about pipelines. What the recipe does lives in the calling repository's justfile;
+# what shape the pipeline has - which recipes run, in what order, with what matrix - lives in the
+# caller's workflow. This file only removes the eight lines of setup each of those jobs would repeat.
+#
+# Use dotnet-test.yml instead when the recipe produces test results worth collecting.
+
+on:
+  workflow_call:
+    inputs:
+      recipe:
+        description: The `just` recipe to run.
+        type: string
+        required: true
+      dotnet-version:
+        description: .NET SDK version handed to actions/setup-dotnet.
+        type: string
+        default: '10.0.x'
+      runs-on:
+        description: Runner label the job executes on.
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  run:
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: Setup just
+        uses: extractions/setup-just@v4
+
+      - name: Run
+        run: just ${{ inputs.recipe }}

@@ -1,0 +1,40 @@
+name: Test Report
+
+# Collects the TRX artifacts every dotnet-test.yml job uploaded and publishes one check.
+#
+# It gathers by pattern rather than by name so that a caller running the tests over a matrix gets a
+# single report rather than one per group. A reusable workflow with a matrix can return only one
+# output value, which is why results travel as artifacts and are picked up here instead.
+#
+# Call it with `if: always()`: a report is most useful precisely when a test job failed.
+
+on:
+  workflow_call:
+    inputs:
+      artifact-pattern:
+        description: Pattern matching the TRX artifacts to collect.
+        type: string
+        default: test-results-*
+      runs-on:
+        description: Runner label the job executes on.
+        type: string
+        default: ubuntu-latest
+
+jobs:
+  report:
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - name: Download test results
+        id: download
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          pattern: ${{ inputs.artifact-pattern }}
+          merge-multiple: true
+          path: test-results
+
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@v2.24.0
+        if: steps.download.outcome == 'success'
+        with:
+          files: "test-results/**/*.trx"

@@ -1,10 +1,11 @@
 name: .NET Release
 
-# Reusable release pipeline for Annium .NET sub-projects.
+# The one job that publishes. It sets up the toolchain and hands the whole release sequence -
+# version bump, build, pack, push, tag - to the caller's `ci-release` recipe.
 #
-# The workflow knows only how to set up the toolchain and invoke `just`; the
-# whole release sequence (format guard, version bump, build, lint, test, pack,
-# publish, tag) lives in the caller's `ci-release` recipe.
+# Tests are not part of it. In the v2 shape they run as their own jobs, which the caller places
+# before this one, so that a release is gated by the same recipes a merge request runs rather than
+# by a second copy of them buried in a release-only pipeline.
 
 on:
   workflow_call:
@@ -14,15 +15,11 @@ on:
         type: string
         default: '10.0.x'
       runs-on:
-        description: Runner label the jobs execute on.
+        description: Runner label the job executes on.
         type: string
         default: ubuntu-latest
-      skip-ci-marker:
-        description: Substring in the head-commit message that skips the release entirely.
-        type: string
-        default: 'skip ci'
       test-results-retention-days:
-        description: How long the TRX artifact is kept.
+        description: How long the TRX artifact is kept, if the release recipe produces one.
         type: number
         default: 30
     secrets:
@@ -31,19 +28,8 @@ on:
         required: true
 
 jobs:
-  init:
-    runs-on: ${{ inputs.runs-on }}
-    outputs:
-      run_ci: ${{ steps.check.outputs.run_ci }}
-    steps:
-      - name: Check if the release should run
-        id: check
-        run: echo "run_ci=${{ !contains(github.event.head_commit.message, inputs.skip-ci-marker) }}" >> $GITHUB_OUTPUT
-
   release:
     runs-on: ${{ inputs.runs-on }}
-    needs: init
-    if: ${{ needs.init.outputs.run_ci == 'true' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -65,7 +51,7 @@ jobs:
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: test-results
+          name: test-results-release
           path: '**/*.trx'
-          if-no-files-found: warn
+          if-no-files-found: ignore
           retention-days: ${{ inputs.test-results-retention-days }}
