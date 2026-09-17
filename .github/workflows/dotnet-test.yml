@@ -75,11 +75,16 @@ jobs:
       - name: Run
         run: just ${{ inputs.recipe }}
 
+      # overwrite, because artifacts accumulate across attempts rather than replacing each other, and
+      # test-report.yml gathers by pattern and merges. Without it a re-run adds a second set of TRX
+      # beside the first, the report counts their union, and a job that failed once stays counted as
+      # failed however many green attempts follow - so re-running can never clear a flake.
       - name: Upload test results
         uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ${{ inputs.artifact }}
+          overwrite: true
           path: '**/*.trx'
           if-no-files-found: warn
           retention-days: ${{ inputs.test-results-retention-days }}
